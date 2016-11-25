@@ -14,6 +14,7 @@ module Errors
   Disabled = "agent_disabled"
   FailedToStart = "agent_failed_to_start"
   NonZeroExit = "agent_exit_non_zero"
+  InvalidYaml = "invalid_yaml"
 end
 
 class ProcessingError < StandardError
@@ -179,6 +180,37 @@ def wait_for_lockfile(lockfile = '', check_interval = 0.1, give_up_after = 30)
   end
 end
 
+def do_service(config, action_input)
+  exitcode = DEFAULT_EXITCODE
+  cmd = [config["puppet_bin"], "resource", "service", "--to_yaml"]
+  if action_input["name"]
+    cmd.push(action_input["name"])
+    if action_input["ensure"]
+      cmd.push("ensure=#{action_input["ensure"]}")
+    end
+    unless action_input["enable"].nil?
+      cmd.push("enable=#{action_input["enable"]}")
+    end
+  end
+  $stderr.puts "command is #{cmd}"
+  env = make_environment_hash()
+  run_result = Puppet::Util::Execution.execute(cmd, {:failonfail => false,
+                                                 :custom_environment => env,
+                                                 :override_locale => false})
+  if !run_result
+    return make_error_result(exitcode, Errors::FailedToStart,
+                             "Failed to start Puppet resource")
+  end
+  exitcode = run_result.exitstatus
+
+  begin
+    parsed_result = YAML.load(run_result)
+  rescue Psych::SyntaxError
+    raise Errors::InvalidYaml
+  end
+  parsed_result
+end
+
 def start_run(config, action_input)
   exitcode = DEFAULT_EXITCODE
   cmd = make_command_array(config, action_input)
@@ -284,6 +316,63 @@ def metadata()
           },
           :required => [:kind, :time, :transaction_uuid, :environment, :status,
                         :exitcode, :version]
+        }
+      },
+      { :name        => "service",
+        :description => "Manage a service",
+        :input       => {
+          :type      => "object",
+          :properties => {
+            name: {
+              type: "string",
+            },
+            :ensure => {
+              :type => "string",
+            },
+            :enable => {
+              :type => "string",
+            },
+          },
+          :required => [:name]
+        },
+        :results => {
+          :type => "object",
+          :properties => {
+            :kind => {
+              :type => "string"
+            },
+            :time => {
+              :type => "string"
+            },
+            :transaction_uuid => {
+              :type => "string"
+            },
+            :environment => {
+              :type => "string"
+            },
+            :status => {
+              :type => "string"
+            },
+            :error_type => {
+              :type => "string"
+            },
+            :error => {
+              :type => "string"
+            },
+            :exitcode => {
+              :type => "number"
+            },
+            :result => {
+              type: "object"
+            },
+            :service => {
+              type: "object"
+            },
+            :version => {
+              :type => "number"
+            }
+          },
+          :required => [:service]
         }
       }
     ],
@@ -396,6 +485,66 @@ def get_action_input(args)
   action_input
 end
 
+def action_service(input)
+  begin
+    args = JSON.parse(input)
+  rescue
+    return make_error_result(DEFAULT_EXITCODE, Errors::InvalidJson,
+                             "Invalid json received on STDIN: #{input}")
+  end
+  unless args.is_a?(Hash)
+    return make_error_result(DEFAULT_EXITCODE, Errors::InvalidJson,
+                             "The json received on STDIN was not a hash: #{args.to_s}")
+  end
+
+  output_files = args["output_files"]
+  if output_files
+    begin
+      $stdout.reopen(File.open(output_files["stdout"], 'w'))
+      $stderr.reopen(File.open(output_files["stderr"], 'w'))
+    rescue => e
+      print make_error_result(DEFAULT_EXITCODE, Errors::InvalidJson,
+                              "Could not open output files: #{e.message}").to_json
+      exit 5 # this exit code is reserved for problems with opening
+             # of the output_files
+    end
+
+    at_exit do
+      status = if $!.nil?
+        0
+      elsif $!.is_a?(SystemExit)
+        $!.status
+      else
+        1
+      end
+
+      # flush the stdout/stderr before writing the exitcode
+      # file to avoid pxp-agent reading incomplete output
+      $stdout.fsync
+      $stderr.fsync
+      begin
+        File.open(output_files["exitcode"], 'w') do |f|
+          f.puts(status)
+        end
+      rescue => e
+        print make_error_result(DEFAULT_EXITCODE, Errors::InvalidJson,
+                                "Could not open exit code file: #{e.message}").to_json
+        exit 5 # this exit code is reserved for problems with opening
+               # of the output_files
+      end
+    end
+  end
+
+  begin
+    config = get_configuration(args)
+    action_input = get_action_input(args)
+  rescue ProcessingError => e
+    return make_error_result(DEFAULT_EXITCODE, e.error_type, e.message)
+  end
+
+  do_service(config, action_input)
+end
+
 def action_run(input)
   begin
     args = JSON.parse(input)
@@ -461,8 +610,15 @@ if __FILE__ == $0
 
   if action == 'metadata'
     puts metadata.to_json
-  else
+  elsif action == 'run'
     action_results = action_run($stdin.read.chomp)
+    print action_results.to_json
+
+    unless action_results["error"].nil?
+      exit 1
+    end
+  elsif action == 'service'
+    action_results = action_service($stdin.read.chomp)
     print action_results.to_json
 
     unless action_results["error"].nil?
