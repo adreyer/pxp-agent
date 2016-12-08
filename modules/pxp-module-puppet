@@ -208,7 +208,9 @@ def do_service(config, action_input)
   rescue Psych::SyntaxError
     raise Errors::InvalidYaml
   end
-  parsed_result
+  {
+    results: parsed_result,
+  }
 end
 
 def start_run(config, action_input)
@@ -341,6 +343,9 @@ def metadata()
             :kind => {
               :type => "string"
             },
+            :results => {
+              type: "object"
+            },
             :time => {
               :type => "string"
             },
@@ -372,7 +377,7 @@ def metadata()
               :type => "number"
             }
           },
-          :required => [:service]
+          :required => []
         }
       }
     ],

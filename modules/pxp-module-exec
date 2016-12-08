@@ -1,0 +1,71 @@
+#!/opt/puppetlabs/puppet/bin/ruby
+
+require 'open3'
+require 'json'
+
+METADATA = { description: 'run and arbitrary command',
+             actions: [ {
+               name: 'shell',
+               input: {
+                 type: 'object',
+                 properties: {
+                   arguments: {
+                     type: 'array',
+                     items: {
+                       type: 'string',
+                     },
+                   },
+                   stdin: {
+                     type: 'string',
+                   },
+                   env: {
+                     type: 'object'
+                   },
+                   command: {
+                     type: 'string',
+                   },
+                 },
+                 required: ['command'],
+               },
+             results: {
+               type: 'object',
+               properties: {
+                 stdout: {
+                   type: 'string',
+                 },
+                 stderr: {
+                     type: 'string',
+                   },
+                 exitcode: {
+                   type: 'number',
+                 },
+                 required: [:exitcode],
+               }
+             }
+             }, ],
+         configuration: {
+           type: 'object',
+         },
+}
+
+def run_shell(input)
+  args = JSON.parse(input)
+  output = `#{args['input']['command']}`
+  exitcode = $?
+  { stdout: output,
+    exitcode: exitcode,
+  }
+end
+
+
+if __FILE__ == $0
+  action = ARGV.shift || 'metadata'
+
+  if action == 'metadata'
+    puts METADATA.to_json
+  elsif action == 'shell'
+    results = run_shell($stdin.read.chomp)
+    print results.to_json
+   end
+end
+
