@@ -3,24 +3,14 @@
 require 'open3'
 require 'json'
 
-METADATA = { description: 'run and arbitrary command',
+METADATA = {
+             description: 'run commands',
              actions: [ {
                name: 'shell',
+               description: 'run an arbitray shell command',
                input: {
                  type: 'object',
                  properties: {
-                   arguments: {
-                     type: 'array',
-                     items: {
-                       type: 'string',
-                     },
-                   },
-                   stdin: {
-                     type: 'string',
-                   },
-                   env: {
-                     type: 'object'
-                   },
                    command: {
                      type: 'string',
                    },
@@ -37,35 +27,74 @@ METADATA = { description: 'run and arbitrary command',
                      type: 'string',
                    },
                  exitcode: {
-                   type: 'number',
+                   type: 'string',
                  },
-                 required: [:exitcode],
-               }
+                 errors: {
+                   type: 'array',
+                 },
+               },
+               required: [],
              }
              }, ],
          configuration: {
            type: 'object',
+           properties: {},
+           required: [],
          },
 }
 
-def run_shell(input)
-  args = JSON.parse(input)
+def run_shell(args)
+  $stderr.puts "args: #{args}"
   output = `#{args['input']['command']}`
-  exitcode = $?
+  exitcode = $?.exitstatus
   { stdout: output,
-    exitcode: exitcode,
-  }
+    exitcode: exitcode,}
 end
 
+def setup(input)
+  args = JSON.parse(input)
+
+  unless args.is_a?(Hash)
+    raise ArgumentError("Input must be an object")
+  end
+
+  output_files = args["output_files"]
+
+  if output_files
+    $stdout.reopen(File.open(output_files["stdout"], 'w'))
+    $stderr.reopen(File.open(output_files["stderr"], 'w'))
+  end
+
+  return args
+end
 
 if __FILE__ == $0
+  exitcode = 5
   action = ARGV.shift || 'metadata'
 
   if action == 'metadata'
     puts METADATA.to_json
-  elsif action == 'shell'
-    results = run_shell($stdin.read.chomp)
-    print results.to_json
-   end
+    exitcode = 0
+  else
+    begin
+      args = setup($stdin.read.chomp)
+      exitcode = 1
+    rescue Exception => e
+      $stdout.print({ errors: ["Error during setup: #{e}"] }.to_json)
+    end
+    if exitcode == 1
+      begin
+        results = run_shell(args)
+        $stdout.print results.to_json
+        exitcode = 0
+      rescue Exception => e
+        $stdout.print({ errors: ["Error during run: #{e}"] }.to_json)
+      end
+    end
+    if args['output_files']['exitcode']
+      File.open(args['output_files']['exitcode'], 'w' ) do |fh|
+        fh.print(exitcode)
+      end
+    end
+  end
 end
-

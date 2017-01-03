@@ -86,7 +86,7 @@ def force_unicode(s)
   end
 end
 
-def check_config_print(cli_arg, config)
+de check_config_print(cli_arg, config)
   command_array = [config["puppet_bin"], "agent", "--configprint", cli_arg]
   process_output = Puppet::Util::Execution.execute(command_array,
                                                    {:custom_environment => get_env_fix_up(),
@@ -208,9 +208,7 @@ def do_service(config, action_input)
   rescue Psych::SyntaxError
     raise Errors::InvalidYaml
   end
-  {
-    results: parsed_result,
-  }
+  parsed_result
 end
 
 def start_run(config, action_input)
@@ -611,6 +609,7 @@ def action_run(input)
 end
 
 if __FILE__ == $0
+  exitcode = 5
   action = ARGV.shift || 'metadata'
 
   if action == 'metadata'
