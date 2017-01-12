@@ -373,7 +373,12 @@ void RequestProcessor::processNonBlockingRequest(const ActionRequest& request)
             err_msg =
                 lth_loc::format("already exists an ongoing task with transaction id {1}",
                                 request.transactionId());
-        } else {
+        } else if (storage_ptr_->find(request.transactionId())) {
+            err_msg =
+                lth_loc::format("already exists a previous task with transaction id {1}",
+                                request.transactionId());
+        }
+        else {
             try {
                 // Initialize the action metadata file
                 auto metadata = ActionResponse::getMetadataFromRequest(request);

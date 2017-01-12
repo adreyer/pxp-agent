@@ -259,7 +259,7 @@ end
 # @raise String indicating something went wrong, test case can use to fail
 def rpc_blocking_request(broker, targets,
                          pxp_module = 'pxp-module-puppet', action = 'run',
-                         params)
+                         params = {})
   rpc_request(broker, targets, pxp_module, action, params, true)
 end
 
@@ -277,13 +277,14 @@ end
 # @raise String indicating something went wrong, test case can use to fail
 def rpc_non_blocking_request(broker, targets,
                          pxp_module = 'pxp-module-puppet', action = 'run',
-                         params)
+                         params = {})
   rpc_request(broker, targets, pxp_module, action, params, false)
 end
 
 def rpc_request(broker, targets,
                 pxp_module = 'pxp-module-puppet', action = 'run',
-                params, blocking)
+                params = {} , blocking = false, transaction_id = nil)
+  transaction_id ||= SecureRandom.uuid
   mutex = Mutex.new
   have_response = ConditionVariable.new
   responses = Hash.new
@@ -297,7 +298,7 @@ def rpc_request(broker, targets,
         :data     => JSON.load(message.data)
       }
       responses[resp[:envelope][:sender]] = resp
-      print resp
+      print "#{resp}\n"
       have_response.signal
     end
   end
@@ -308,7 +309,7 @@ def rpc_request(broker, targets,
   })
 
   message_data = {
-    :transaction_id => SecureRandom.uuid,
+    :transaction_id => transaction_id,
     :module         => pxp_module,
     :action         => action,
     :params         => params
@@ -426,14 +427,14 @@ def get_puppet_agent_pids(host)
   else
     command = "ps -ef | grep 'puppet agent' | grep -v 'grep' | grep -v 'true' | sed 's/^[^0-9]*//g' | cut -d\\  -f1"
   end
-    
+
   on(host, command, :accept_all_exit_codes => true) do |output|
     pids = output.stdout.chomp.split
   end
-    
+
   pids
 
-end  
+end
 
 def wait_for_sleep_process(target)
   begin
