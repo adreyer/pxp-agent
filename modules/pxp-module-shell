@@ -1,0 +1,133 @@
+#!/opt/puppetlabs/puppet/bin/ruby
+# encoding: UTF-8
+
+require 'json'
+require 'yaml'
+require 'open3'
+
+METADATA = {
+        :description => "PXP Shell module",
+        :actions => [
+          { :name        => "run",
+            :description => "Start a Puppet run",
+            :input       => {
+              :type      => "object",
+              :properties => {
+                :command => {
+                  :type => "string"
+                },
+                :stdin => {
+                  :type => "string"
+                }
+              },
+              :required => [:command]
+            },
+            :results => {
+              :type => "object",
+              :properties => {
+                :time => {
+                  :type => "string"
+                },
+                :stdout => {
+                  :type => "string"
+                },
+                :stderr => {
+                  :type => "string"
+                },
+                :error => {
+                  :type => "string"
+                },
+                :exitcode => {
+                  :type => "number"
+                },
+                :error => {
+                  type: "object"
+                }
+              },
+              :required => []
+            }
+          }
+        ],
+        :configuration => {
+          :type => "object",
+          :properties => {}
+        }
+      }
+
+DEFAULT_EXITCODE = -1
+
+def exit_error(exit_code, message)
+  output = { "error" => message }.to_json
+  print output
+  exit exit_code
+end
+
+
+def run(input)
+  begin
+   args = JSON.parse(input)
+  rescue
+    exit_error(DEFAULT_EXITCODE, "Invalid json received on STDIN: #{input}")
+  end
+
+  unless args.is_a?(Hash)
+    return exit_error(DEFAULT_EXITCODE,
+                      "The json received on STDIN was not a hash: #{args.to_s}")
+  end
+
+  output_files = args["output_files"]
+  if output_files
+    begin
+      $stdout.reopen(File.open(output_files["stdout"], 'w'))
+      $stderr.reopen(File.open(output_files["stderr"], 'w'))
+    rescue => e
+      # this exit code is reserved for problems with opening
+      # of the output_files
+      exit_error(5, "Could not open output files: #{e.message}")
+    end
+
+    at_exit do
+      status = if $!.nil?
+        0
+      elsif $!.is_a?(SystemExit)
+        $!.status
+      else
+        1
+      end
+
+      # flush the stdout/stderr before writing the exitcode
+      # file to avoid pxp-agent reading incomplete output
+      $stdout.fsync
+      $stderr.fsync
+      begin
+        File.open(output_files["exitcode"], 'w') do |f|
+          f.puts(status)
+        end
+      rescue => e
+        exit_error(5, "Could not open exit code file: #{e.message}")
+      end
+    end
+  end
+
+    action_input = args["input"]
+    # This should only happen when pxp-agent is broken
+    unless action_input.is_a?(Hash) && action_input["command"].is_a?(String)
+      exit_error(DEFAULT_EXITCODE, "The json received on STDIN did not contain a valid 'input' key: #{args.to_s}")
+    end
+
+    cout, cerr, cstatus = Open3.capture3("echo hello world", :stdin_data => "")
+    { "stdout" => cout,
+      "sterr" => cerr,
+      "exitcode" => cstatus.exitstatus,
+    }
+end
+
+if __FILE__ == $0
+  action = ARGV.shift || 'metadata'
+  if action == 'metadata'
+    puts METADATA.to_json
+  else
+    result = run($stdin.read.chomp)
+    print result.to_json
+  end
+end
